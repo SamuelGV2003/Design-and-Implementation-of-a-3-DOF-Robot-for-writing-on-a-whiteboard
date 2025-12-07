@@ -1,0 +1,160 @@
+% Este código lo que hace es definir las trayectorias que se deben de
+% realizar. Al ingresar las 3 letras que se quieres escribir se realizó una
+% matriz de 5 filas por 11 columnas para definir distintos puntos. Al
+% indicarle las 3 letras nos devuelve un .csv con los puntos a los que
+% tiene que llegar el robot para dibujar las letras.
+clear; clc; close all;
+
+% Aquí ponemos las letras que queremos escribir
+texto = {'S','B','M'};   
+
+% Dimensiones
+ancho_pizarra = 200; alto_pizarra = 100;     % mm (20x10 cm)
+ancho_letras = 50;  altura_letras = 80;    % mm (5x8 cm por letra)
+espacio = 10;   % = 15 mm entre letras
+
+% Matriz pensada en Excel A–E x 1–11
+dx = ancho_letras/4;                  % 5 columnas → 4 pasos
+dy = altura_letras/10;                 % 11 filas → 10 pasos
+y0 = (alto_pizarra - altura_letras)/2;      % centrado vertical
+Z_DOWN = 10.0;  Z_UP = 0.0;
+
+columnas = 'ABCDE'; filas = 1:11;
+
+% Tabla etiqueta -> (x,y) SIN offset en X
+labels = strings(numel(columnas)*numel(filas),1);
+x_mm = zeros(size(labels)); y_mm = x_mm; k=1;
+for ci = 1:numel(columnas)
+    for r = filas
+        labels(k) = sprintf('%c%d', columnas(ci), r);
+        x_mm(k)   = (ci-1)*dx;
+        y_mm(k)   = y0 + (r-1)*dy;
+        k = k+1;
+    end
+end
+
+Grid = table(labels, x_mm, y_mm, 'VariableNames', {'label','x_mm','y_mm'});
+label2xy = @(lab) deal( ...
+    Grid.x_mm(Grid.label == string(lab)), ...
+    Grid.y_mm(Grid.label == string(lab)) );
+
+% Trayectorias de las letras
+letras.A = { {'A9','A1','E1','E9'}, {'A5','E5'} };
+letras.B = { {'A1','A9'}, {'A1','D1','E2','E4','D5','A5'}, {'D5','E6','E8','D9','A9'}};
+letras.C = { {'E1','A1','A9','E9'} };
+letras.D = { {'A1','D1','E3','E7','D9','A9','A1'} };
+letras.E = { {'E1','A1','A9','E9'}, {'A5','E5'} };
+letras.F = { {'E1','A1','A9'}, {'A5','E5'} };
+letras.G = { {'E1','A1','A9','E9','E5','C5'} };
+letras.H = { {'A1','A9'}, {'E1','E9'}, {'A5','E5'} };
+letras.I = { {'A1','E1'}, {'C1','C9'}, {'A9','E9'} };
+letras.J = { {'A1','C1','E1'},{'C1','C8','B9','A8'} };
+letras.K = { {'A1','A9'}, {'A5','E1'}, {'A5','E9'} };
+letras.L = { {'A1','A9','E9'} };
+letras.M = { {'A1','A9'},{'A1','C5','E1','E9'} };
+letras.N = { {'A1','A9'}, {'A1','E9','E1'} };
+letras.O = { {'A1','E1','E9','A9','A1'} };
+letras.P = { {'A9','A1','E1','E5','A5'} };
+letras.Q = { {'E1','A1','A9','E9'}, {'E1','E9'}, {'D7','E11'} };
+letras.R = { {'A9','A1','E1','E5','A5'}, {'A5','E9'} };
+letras.S = { {'E1','A1','A5','E5','E9','A9'} };
+letras.T = { {'A1','C1','E1'}, {'C1','C9'} };
+letras.U = { {'A1','A9','E9','E1'} };
+letras.V = { {'A1','C9','E1'} };
+letras.W = { {'A1','B9','C5','D9','E1'} };
+letras.X = { {'A1','E9'}, {'E1','A9'} };
+letras.Y = { {'A1','C5','E1'}, {'C5','C9'} };
+letras.Z = { {'A1','E1','A9','E9'} };
+letras.carita = { {'B2','B4'}, {'D2','D4'}, {'A5','A7','B9','D9','E7','E5'} };
+letras.corazon = { {'C4','B2','A2','A5','C9','E5','E2','D2','C4'} };
+letras.persona = { {'B1','B3','D3','D1','B1'}, {'C3','C9'}, {'D6','C4','B6'}, {'B11','C9','D11'} };
+
+% Construcción de la trayectoria
+letter_xoff = @(idx) (idx-1)*(ancho_letras + espacio);  % 0, 75, 150 mm
+X=[]; Y=[]; Z=[]; PEN=[]; STROKE_START=[]; STROKE_END=[];
+for t = 1:numel(texto)
+    ch = texto{t};
+    assert(isfield(letras, ch), 'La letra "%s" no está definida.', ch);
+    xoff = letter_xoff(t);
+
+    base = numel(X);
+
+    [xL,yL,zL,pL, start_idx, end_idx] = letterToTraj(letras.(ch), xoff, Z_UP, Z_DOWN, label2xy);
+
+    % concatena trayectorias
+    X=[X; xL]; Y=[Y; yL]; Z=[Z; zL]; PEN=[PEN; pL];
+
+    % asegura vectores columna
+    start_idx = start_idx(:);
+    end_idx   = end_idx(:);
+    STROKE_START = [STROKE_START; base + start_idx];
+    STROKE_END   = [STROKE_END;   base + end_idx];
+end
+
+% Offsets para corregir
+Y = alto_pizarra - Y;
+Y_SHIFT = 150; % 150mm es la altura del suelo a la base de la pizarra
+Y = Y + Y_SHIFT;
+X_SHIFT = -85; % el -85mm se debe a un margen que se dejó entre el borde de la pizarra y la primera letra, sino sería -90mm
+X = X + X_SHIFT;
+
+% Visualización
+fig = figure('Name','Preview Trayectoria','Color','w'); hold on; axis equal; grid on;
+% Marcos de cada letra
+for t = 1:3
+    y_rect_robot = alto_pizarra - (y0 + altura_letras);
+    rectangle('Position',[letter_xoff(t) + X_SHIFT, y_rect_robot + Y_SHIFT, ancho_letras, altura_letras], ...
+              'EdgeColor',[0.7 0.7 0.7], 'LineStyle','-');
+end
+
+% Trazos: NEGRO = Escribiendo, ROJO PUNTEADO = No Escribiendo
+for i = 2:numel(X)
+    if PEN(i-1)==1 && PEN(i)==1
+        plot([X(i-1) X(i)], [Y(i-1) Y(i)], 'k-', 'LineWidth',1.8);
+    else
+        plot([X(i-1) X(i)], [Y(i-1) Y(i)], 'r:', 'LineWidth',1.6);
+    end
+end
+
+% Marcas de movimiento en Z
+scatter(X(STROKE_START), Y(STROKE_START), 36, 'g', 'filled');
+plot(X(STROKE_END), Y(STROKE_END), 'rx', 'MarkerSize',8, 'LineWidth',1.2);
+
+xlim([-100 100]); ylim([150 250]);
+set(gca,'YDir','normal'); xlabel('x [mm]'); ylabel('y [mm]');
+title(['Texto: ', strjoin(texto,'')]);
+
+% Guardar imagen
+exportgraphics(fig, 'Recorrido.png', 'Resolution', 200);
+disp('Imagen guardada: Recorrido.png');
+
+% Exportar CSV 
+T = table(X, Y, Z, ...
+    'VariableNames', {'x_mm','y_mm','z_mm'});
+writetable(T, 'Puntos.csv');
+disp('CSV exportado: Puntos.csv');
+
+% Helpers 
+function [xL,yL,zL,pL,start_idx,end_idx] = letterToTraj(strokes, xoff, Z_UP, Z_DOWN, label2xy)
+    xL=[]; yL=[]; zL=[]; pL=[];
+    start_idx=[]; end_idx=[];
+    for s = 1:numel(strokes)
+        lab = strokes{s};
+
+        [x0,y0] = label2xy(lab{1});
+        xL = [xL; xoff + x0; xoff + x0];
+        yL = [yL; y0; y0];
+        zL = [zL; Z_UP; Z_DOWN];
+        pL = [pL; 0; 1];
+        start_idx(end+1,1) = numel(xL)-1;
+
+        % recorrer el trazo
+        for k = 2:numel(lab)
+            [xk,yk] = label2xy(lab{k});
+            xL=[xL; xoff + xk]; yL=[yL; yk]; zL=[zL; Z_DOWN]; pL=[pL; 1];
+        end
+        % levantar al final
+        xL=[xL; xoff + xk]; yL=[yL; yk]; zL=[zL; Z_UP]; pL=[pL; 0];
+        end_idx(end+1,1) = numel(xL);
+    end
+end

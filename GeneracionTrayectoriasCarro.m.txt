@@ -1,0 +1,154 @@
+% Este código ahora define la trayectoria para UNA sola letra,
+% ocupando toda el área de la pizarra (20x10 cm = 200x100 mm).
+% La malla de referencia es ahora A–T x 1–15.
+
+clear; clc; close all;
+
+% ========= LETRA A DIBUJAR =========
+texto = {'carro'};    % <-- una sola letra
+
+% ========= DIMENSIONES =========
+ancho_pizarra  = 200;   % mm (20 cm)
+alto_pizarra   = 100;   % mm (10 cm)
+
+% La ÚNICA letra usa TODA la pizarra
+ancho_letras   = ancho_pizarra;   % la letra ocupa todo el ancho
+altura_letras  = alto_pizarra;    % la letra ocupa toda la altura
+espacio        = 0;               % no hay separación entre letras
+
+% Matriz pensada en Excel A–T x 1–15
+columnas = 'A':'T';   % A, B, ..., T  (20 columnas)
+filas    = 1:15;      % 1,2,...,15
+
+% Paso entre columnas y filas
+dx = ancho_letras / (numel(columnas)-1);   % 20 columnas → 19 pasos en X
+dy = altura_letras / (numel(filas)-1);     % 15 filas → 14 pasos en Y
+
+% Para centrar vertical (aquí será 0 porque altura_letras = alto_pizarra)
+y0 = (alto_pizarra - altura_letras)/2;
+
+Z_DOWN = 10.0;
+Z_UP   = 0.0;
+
+% ======= Construir tabla label -> (x,y) =======
+labels = strings(numel(columnas)*numel(filas),1);
+x_mm = zeros(size(labels)); 
+y_mm = x_mm; 
+k=1;
+
+for ci = 1:numel(columnas)
+    for r = filas
+        labels(k) = sprintf('%c%d', columnas(ci), r);
+        x_mm(k)   = (ci-1)*dx;              % X desde 0 hasta ancho_letras
+        y_mm(k)   = y0 + (r-1)*dy;          % Y desde y0 hasta y0+altura_letras
+        k = k+1;
+    end
+end
+
+Grid = table(labels, x_mm, y_mm, 'VariableNames', {'label','x_mm','y_mm'});
+
+label2xy = @(lab) deal( ...
+    Grid.x_mm(Grid.label == string(lab)), ...
+    Grid.y_mm(Grid.label == string(lab)) );
+
+% ======= DEFINICIÓN DE LETRAS (siguen usando A–E, 1–11 si querés) =======
+% Puedes ir migrando estas trayectorias a usar más columnas (F, G, ..., T)
+% y más filas (hasta 15) si querés más resolución.
+
+letras.carro = { {'P3','I3','F5','D5','B7','B9','C10','G10','J10','P10','Q9','Q4','P3'}, ...
+                 {'D10','D12','E13','F13','G12','G10'},  ...
+                 {'L10','L12','M13','N13','O12','O10'},  ...
+                 {'K4','I4','G6','K6','K4'} ,  ...
+                 {'O4','M4','M6','O6','O4'}  };
+
+% ========= Construcción de la trayectoria (SOLO 1 LETRA) =========
+letter_xoff = @(idx) 0;   % sin desplazamiento, ocupa toda la pizarra
+
+X=[]; Y=[]; Z=[]; PEN=[]; STROKE_START=[]; STROKE_END=[];
+for t = 1:numel(texto)
+    ch = texto{t};
+    assert(isfield(letras, ch), 'La letra "%s" no está definida.', ch);
+    xoff = letter_xoff(t);
+
+    base = numel(X);
+
+    [xL,yL,zL,pL, start_idx, end_idx] = letterToTraj(letras.(ch), xoff, Z_UP, Z_DOWN, label2xy);
+
+    X=[X; xL]; Y=[Y; yL]; Z=[Z; zL]; PEN=[PEN; pL];
+
+    start_idx = start_idx(:);
+    end_idx   = end_idx(:);
+    STROKE_START = [STROKE_START; base + start_idx];
+    STROKE_END   = [STROKE_END;   base + end_idx];
+end
+
+% ====== Offsets para el marco del robot ======
+Y = alto_pizarra - Y;   % invertir Y si tu robot lo necesita
+Y_SHIFT = 150;
+Y = Y + Y_SHIFT;
+X_SHIFT = -85;
+X = X + X_SHIFT;
+
+% ========= Visualización =========
+fig = figure('Name','Preview Trayectoria','Color','w'); 
+hold on; axis equal; grid on;
+
+% Marco de la ÚNICA letra (toma toda la pizarra)
+y_rect_robot = alto_pizarra - (y0 + altura_letras);
+rectangle('Position',[letter_xoff(1) + X_SHIFT, ...
+                      y_rect_robot + Y_SHIFT, ...
+                      ancho_letras, altura_letras], ...
+          'EdgeColor',[0.7 0.7 0.7], 'LineStyle','-');
+
+% Trazos
+for i = 2:numel(X)
+    if PEN(i-1)==1 && PEN(i)==1
+        plot([X(i-1) X(i)], [Y(i-1) Y(i)], 'k-', 'LineWidth',1.8);
+    else
+        plot([X(i-1) X(i)], [Y(i-1) Y(i)], 'r:', 'LineWidth',1.6);
+    end
+end
+
+scatter(X(STROKE_START), Y(STROKE_START), 36, 'g', 'filled');
+plot(X(STROKE_END), Y(STROKE_END), 'rx', 'MarkerSize',8, 'LineWidth',1.2);
+
+xlim([min(X)-20, max(X)+20]);
+ylim([min(Y)-20, max(Y)+20]);
+set(gca,'YDir','normal'); xlabel('x [mm]'); ylabel('y [mm]');
+title(['Texto: ', strjoin(texto,'')]);
+
+exportgraphics(fig, 'Recorrido.png', 'Resolution', 200);
+disp('Imagen guardada: Recorrido.png');
+
+T = table(X, Y, Z, 'VariableNames', {'x_mm','y_mm','z_mm'});
+writetable(T, 'Puntos.csv');
+disp('CSV exportado: Puntos.csv');
+
+% ========= Helpers =========
+function [xL,yL,zL,pL,start_idx,end_idx] = letterToTraj(strokes, xoff, Z_UP, Z_DOWN, label2xy)
+    xL=[]; yL=[]; zL=[]; pL=[];
+    start_idx=[]; end_idx=[];
+    for s = 1:numel(strokes)
+        lab = strokes{s};
+
+        [x0,y0] = label2xy(lab{1});
+        xL = [xL; xoff + x0; xoff + x0];
+        yL = [yL; y0; y0];
+        zL = [zL; Z_UP; Z_DOWN];
+        pL = [pL; 0; 1];
+        start_idx(end+1,1) = numel(xL)-1;
+
+        for k = 2:numel(lab)
+            [xk,yk] = label2xy(lab{k});
+            xL=[xL; xoff + xk]; 
+            yL=[yL; yk]; 
+            zL=[zL; Z_DOWN]; 
+            pL=[pL; 1];
+        end
+        xL=[xL; xoff + xk]; 
+        yL=[yL; yk]; 
+        zL=[zL; Z_UP]; 
+        pL=[pL; 0];
+        end_idx(end+1,1) = numel(xL);
+    end
+end
